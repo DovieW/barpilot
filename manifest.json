@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Context-Switched Bookmarks Bar (barpilot)",
+  "version": "0.1.0",
+  "description": "Safely replace the Bookmarks Bar based on the active tab’s site.",
+  "permissions": ["bookmarks", "tabs", "storage", "alarms"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "ContextBar",
+    "default_popup": "popup.html"
+  }
+}

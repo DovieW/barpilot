@@ -1,0 +1,65 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="popup.css" />
+    <title>ContextBar</title>
+  </head>
+  <body>
+    <header>
+      <h1>ContextBar</h1>
+      <p class="sub">Switches the Bookmarks Bar by site</p>
+    </header>
+
+    <section class="card">
+      <label class="row">
+        <span>Enabled</span>
+        <input id="enabled" type="checkbox" />
+      </label>
+
+      <label class="row">
+        <span>Lock (freeze bar)</span>
+        <input id="locked" type="checkbox" />
+      </label>
+
+      <label class="row">
+        <span>Pinned count</span>
+        <input id="pinnedCount" type="number" min="0" step="1" />
+      </label>
+
+      <label class="row">
+        <span>Default set</span>
+        <select id="defaultSet"></select>
+      </label>
+
+      <div class="row">
+        <button id="rerender">Re-render now</button>
+        <button id="restore">Restore last backup</button>
+      </div>
+
+      <div class="row">
+        <button id="openBookmarks" class="secondary">Open Bookmarks</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Quick rule</h2>
+      <p class="hint">Map a host (like <code>github.com</code>) to a set.</p>
+      <label class="row">
+        <span>Host equals</span>
+        <input id="ruleHost" type="text" placeholder="example.com" />
+      </label>
+      <label class="row">
+        <span>Set</span>
+        <select id="ruleSet"></select>
+      </label>
+      <div class="row">
+        <button id="addRule">Add / update rule</button>
+      </div>
+      <p id="status" class="status"></p>
+    </section>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
