@@ -1,14 +1,35 @@
 {
   "manifest_version": 3,
-  "name": "Context-Switched Bookmarks Bar (barpilot)",
-  "version": "0.1.0",
-  "description": "Safely replace the Bookmarks Bar based on the active tab’s site.",
+  "name": "BarPilot",
+  "version": "0.2.0",
+  "description": "Per-site Bookmarks Bar profiles (safe + recoverable).",
   "permissions": ["bookmarks", "tabs", "storage", "alarms"],
   "background": {
     "service_worker": "background.js"
   },
+  "options_page": "options.html",
   "action": {
-    "default_title": "ContextBar",
+    "default_title": "BarPilot",
     "default_popup": "popup.html"
+  },
+  "commands": {
+    "toggle-lock": {
+      "suggested_key": {
+        "default": "Alt+Shift+L"
+      },
+      "description": "Toggle BarPilot Lock (freeze switching)"
+    },
+    "toggle-enabled": {
+      "suggested_key": {
+        "default": "Alt+Shift+E"
+      },
+      "description": "Toggle BarPilot Enabled"
+    },
+    "rerender-now": {
+      "suggested_key": {
+        "default": "Alt+Shift+R"
+      },
+      "description": "Re-render now"
+    }
   }
 }

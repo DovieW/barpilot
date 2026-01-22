@@ -1,8 +1,8 @@
 /*
-  barpilot - Context-Switched Bookmarks Bar
+  BarPilot - Context-Switched Bookmarks Bar
 
   Safety principles:
-  - Canonical sets live under: Other Bookmarks / ContextBar / Sets
+  - Canonical sets live under: Other Bookmarks / BarPilot / Sets
   - We only delete/move items we created in the managed region, tracked by ID.
   - Before applying, we create BOTH:
     - a real bookmarks backup folder
@@ -14,13 +14,19 @@
 // -----------------------------
 
 const STORAGE_KEYS = {
+  schemaVersion: 'schemaVersion',
   enabled: 'enabled',
   locked: 'locked',
+  mode: 'mode',
+  switchTrigger: 'switchTrigger',
+  pausedUntil: 'pausedUntil',
+  syncWarningAcknowledged: 'syncWarningAcknowledged',
   pinnedCount: 'pinnedCount',
   rules: 'rules',
   defaultSetId: 'defaultSetId',
   lastAppliedHost: 'lastAppliedHost',
   lastApplyAt: 'lastApplyAt',
+  lastError: 'lastError',
   inProgress: 'inProgress',
   pendingHost: 'pendingHost',
   managed: 'managed',
@@ -31,16 +37,22 @@ const STORAGE_KEYS = {
 };
 
 const DEFAULTS = {
+  schemaVersion: 1,
   enabled: true,
   locked: false,
+  mode: 'automatic', // automatic | manual | local
+  switchTrigger: 'activation', // activation | navigation
+  pausedUntil: 0,
+  syncWarningAcknowledged: false,
   pinnedCount: 3,
   rules: [],
   defaultSetId: null,
   lastAppliedHost: null,
   lastApplyAt: 0,
+  lastError: null,
   inProgress: null,
   pendingHost: null,
-  managed: { lastRenderedIds: [], lastStagingFolderId: null },
+  managed: { markerFolderId: null, lastRenderedIds: [], lastStagingFolderId: null },
   snapshots: [],
   lastBackupFolderId: null,
   candidateHost: null,
@@ -54,7 +66,7 @@ const LIMITS = {
 const TIMING = {
   debounceMs: 500,
   dwellMs: 800,
-  minIntervalMs: 1500,
+  minIntervalMs: 2000,
   inProgressStaleMs: 30_000
 };
 
@@ -62,11 +74,15 @@ const ALARMS = {
   candidate: 'candidate-apply'
 };
 
-const CONTEXTBAR = {
-  rootName: 'ContextBar',
+const BARPILOT = {
+  rootNames: ['BarPilot', 'ContextBar'],
   setsName: 'Sets',
   backupsName: 'Backups',
   trashName: 'Trash'
+};
+
+const MARKER = {
+  title: '— BarPilot —'
 };
 
 // -----------------------------
@@ -137,6 +153,7 @@ function bookmarksRemoveTree(id) {
 function tabsQuery(queryInfo) {
   return new Promise((resolve) => chrome.tabs.query(queryInfo, resolve));
 }
+
 
 function alarmsCreate(name, alarmInfo) {
   return new Promise((resolve) => {
@@ -227,9 +244,13 @@ async function getBarAndOtherRootIds() {
   const children = root?.children;
   if (!children || children.length < 2) throw new Error('Unexpected bookmarks root structure');
 
-  // The first two are typically: Bookmarks bar, Other bookmarks.
-  const bar = children[0];
-  const other = children[1];
+  // Prefer well-known IDs when available (helps in localized Chrome builds).
+  const barById = children.find((c) => c.id === '1');
+  const otherById = children.find((c) => c.id === '2');
+
+  // Fallback: the first two are typically: Bookmarks bar, Other bookmarks.
+  const bar = barById || children[0];
+  const other = otherById || children[1];
   if (!bar?.id || !other?.id) throw new Error('Could not discover bar/other root IDs');
   return { barRootId: bar.id, otherRootId: other.id };
 }
@@ -272,12 +293,61 @@ async function isDescendantOf(id, ancestorId) {
   return chain.some((n) => n.id === ancestorId);
 }
 
-async function ensureContextBarFolders(otherRootId) {
-  const contextRootId = await findOrCreateFolderPath([CONTEXTBAR.rootName], otherRootId);
-  const setsRootId = await findOrCreateFolderPath([CONTEXTBAR.rootName, CONTEXTBAR.setsName], otherRootId);
-  const backupsRootId = await findOrCreateFolderPath([CONTEXTBAR.rootName, CONTEXTBAR.backupsName], otherRootId);
-  const trashRootId = await findOrCreateFolderPath([CONTEXTBAR.rootName, CONTEXTBAR.trashName], otherRootId);
-  return { contextRootId, setsRootId, backupsRootId, trashRootId };
+async function findExistingBarPilotRoot(otherRootId) {
+  const kids = await bookmarksGetChildren(otherRootId);
+  for (const name of BARPILOT.rootNames) {
+    const found = kids.find((n) => !n.url && n.title === name);
+    if (found) return found;
+  }
+  return null;
+}
+
+async function ensureBarPilotFolders(otherRootId) {
+  const existingRoot = await findExistingBarPilotRoot(otherRootId);
+  const rootTitle = existingRoot?.title || BARPILOT.rootNames[0];
+  const rootId = existingRoot?.id || (await findOrCreateFolderPath([rootTitle], otherRootId));
+
+  const setsRootId = await findOrCreateFolderPath([rootTitle, BARPILOT.setsName], otherRootId);
+  const backupsRootId = await findOrCreateFolderPath([rootTitle, BARPILOT.backupsName], otherRootId);
+  const trashRootId = await findOrCreateFolderPath([rootTitle, BARPILOT.trashName], otherRootId);
+  return { rootId, rootTitle, setsRootId, backupsRootId, trashRootId };
+}
+
+async function ensureMarkerFolder(barRootId, pinnedCount, managedState) {
+  // 1) Try stored markerFolderId
+  const storedId = managedState?.markerFolderId;
+  if (storedId) {
+    try {
+      const nodes = await bookmarksGet(storedId);
+      const node = nodes?.[0];
+      if (node && !node.url && node.parentId === barRootId) {
+        // ensure it is at the boundary index
+        const siblings = await bookmarksGetChildren(barRootId);
+        const idx = siblings.findIndex((n) => n.id === storedId);
+        if (idx !== pinnedCount) {
+          await bookmarksMove(storedId, { parentId: barRootId, index: pinnedCount });
+        }
+        return storedId;
+      }
+    } catch {
+      // ignore and fall through
+    }
+  }
+
+  // 2) Find by title
+  const kids = await bookmarksGetChildren(barRootId);
+  const existing = kids.find((n) => !n.url && n.title === MARKER.title);
+  if (existing) {
+    const idx = kids.findIndex((n) => n.id === existing.id);
+    if (idx !== pinnedCount) {
+      await bookmarksMove(existing.id, { parentId: barRootId, index: pinnedCount });
+    }
+    return existing.id;
+  }
+
+  // 3) Create new marker folder
+  const created = await bookmarksCreate({ parentId: barRootId, title: MARKER.title, index: pinnedCount });
+  return created.id;
 }
 
 async function readSubtreeAsDTO(rootId) {
@@ -366,7 +436,23 @@ async function getActiveHost() {
   return hostFromUrl(tab.url);
 }
 
+async function isPausedOrManualOrLocal() {
+  const { enabled, locked, mode, pausedUntil } = await storageGet({
+    [STORAGE_KEYS.enabled]: DEFAULTS.enabled,
+    [STORAGE_KEYS.locked]: DEFAULTS.locked,
+    [STORAGE_KEYS.mode]: DEFAULTS.mode,
+    [STORAGE_KEYS.pausedUntil]: DEFAULTS.pausedUntil
+  });
+  if (!enabled || locked) return true;
+  if (mode !== 'automatic') return true;
+  if (pausedUntil && Date.now() < pausedUntil) return true;
+  return false;
+}
+
 async function scheduleCandidateSwitch(host) {
+  if (!host) return;
+  if (await isPausedOrManualOrLocal()) return;
+
   // store candidate and set alarm
   await storageSet({
     [STORAGE_KEYS.candidateHost]: host,
@@ -376,10 +462,10 @@ async function scheduleCandidateSwitch(host) {
   await alarmsCreate(ALARMS.candidate, { when: Date.now() + TIMING.debounceMs });
 }
 
-async function verifyTopLevel(setId, barRootId, pinnedCount) {
+async function verifyTopLevel(setId, markerFolderId) {
   const setKids = await bookmarksGetChildren(setId);
-  const barKids = await bookmarksGetChildren(barRootId);
-  const managed = barKids.slice(pinnedCount);
+  const markerKids = await bookmarksGetChildren(markerFolderId);
+  const managed = markerKids.slice(0, setKids.length);
   if (managed.length !== setKids.length) return false;
   for (let i = 0; i < setKids.length; i++) {
     const a = setKids[i];
@@ -393,8 +479,11 @@ async function verifyTopLevel(setId, barRootId, pinnedCount) {
 
 async function applyHost(host, reason = 'auto') {
   const state = await storageGet({
+    [STORAGE_KEYS.schemaVersion]: DEFAULTS.schemaVersion,
     [STORAGE_KEYS.enabled]: DEFAULTS.enabled,
     [STORAGE_KEYS.locked]: DEFAULTS.locked,
+    [STORAGE_KEYS.mode]: DEFAULTS.mode,
+    [STORAGE_KEYS.pausedUntil]: DEFAULTS.pausedUntil,
     [STORAGE_KEYS.pinnedCount]: DEFAULTS.pinnedCount,
     [STORAGE_KEYS.lastApplyAt]: DEFAULTS.lastApplyAt,
     [STORAGE_KEYS.inProgress]: DEFAULTS.inProgress,
@@ -403,6 +492,10 @@ async function applyHost(host, reason = 'auto') {
   });
 
   if (!state.enabled || state.locked) return;
+  if (reason === 'auto') {
+    if (state.mode !== 'automatic') return;
+    if (state.pausedUntil && Date.now() < state.pausedUntil) return;
+  }
 
   const now = Date.now();
   if (now - (state.lastApplyAt || 0) < TIMING.minIntervalMs && reason !== 'manual') {
@@ -423,11 +516,11 @@ async function applyHost(host, reason = 'auto') {
     if (!setId) return;
 
     const { barRootId, otherRootId } = await getBarAndOtherRootIds();
-    const { setsRootId, backupsRootId, trashRootId } = await ensureContextBarFolders(otherRootId);
+    const { rootTitle, setsRootId, backupsRootId, trashRootId } = await ensureBarPilotFolders(otherRootId);
 
-    // Validate that setId is under ContextBar/Sets
+    // Validate that setId is under BarPilot/Sets (or migrated legacy root)
     const ok = await isDescendantOf(setId, setsRootId);
-    if (!ok) throw new Error('Refusing to apply: target set is not under ContextBar/Sets');
+    if (!ok) throw new Error(`Refusing to apply: target set is not under ${rootTitle}/Sets`);
 
     const pinnedCount = Math.max(0, Number(state.pinnedCount || 0));
 
@@ -435,12 +528,16 @@ async function applyHost(host, reason = 'auto') {
     await snapshotBar(host, barRootId, pinnedCount);
     await backupBar(host, barRootId, backupsRootId);
 
-    // Create staging folder under the bar
-    const stagingTitle = `__ContextBarStaging ${opId}`;
-    const stagingFolder = await bookmarksCreate({ parentId: barRootId, title: stagingTitle });
+    // Ensure marker folder is present at the boundary index
+    const markerFolderId = await ensureMarkerFolder(barRootId, pinnedCount, state.managed);
+
+    // Create staging folder under marker folder
+    const stagingTitle = `__BarPilotStaging ${opId}`;
+    const stagingFolder = await bookmarksCreate({ parentId: markerFolderId, title: stagingTitle });
     await storageSet({
       [STORAGE_KEYS.managed]: {
         ...(state.managed || DEFAULTS.managed),
+        markerFolderId,
         lastStagingFolderId: stagingFolder.id
       }
     });
@@ -451,11 +548,10 @@ async function applyHost(host, reason = 'auto') {
       await copySubtree(c.id, stagingFolder.id);
     }
 
-    // Compute current children and managed deletion candidates
-    const barChildren = await bookmarksGetChildren(barRootId);
-    const managedRegion = barChildren.slice(pinnedCount);
+    // Compute current children and managed deletion candidates (inside marker folder)
+    const markerChildren = await bookmarksGetChildren(markerFolderId);
     const lastRenderedIds = state.managed?.lastRenderedIds || [];
-    const eligible = managedRegion.filter((n) => lastRenderedIds.includes(n.id));
+    const eligible = markerChildren.filter((n) => lastRenderedIds.includes(n.id));
 
     // Move old managed items to Trash (safest)
     if (eligible.length) {
@@ -468,12 +564,12 @@ async function applyHost(host, reason = 'auto') {
       }
     }
 
-    // Move staging children into the bar at pinnedCount
+    // Move staging children into the marker folder at index 0
     const stagingChildren = await bookmarksGetChildren(stagingFolder.id);
     const renderedTopLevelIds = [];
-    let idx = pinnedCount;
+    let idx = 0;
     for (const n of stagingChildren) {
-      const moved = await bookmarksMove(n.id, { parentId: barRootId, index: idx });
+      const moved = await bookmarksMove(n.id, { parentId: markerFolderId, index: idx });
       renderedTopLevelIds.push(moved.id);
       idx++;
     }
@@ -484,6 +580,7 @@ async function applyHost(host, reason = 'auto') {
     // Record state
     await storageSet({
       [STORAGE_KEYS.managed]: {
+        markerFolderId,
         lastRenderedIds: renderedTopLevelIds,
         lastStagingFolderId: null
       },
@@ -492,7 +589,7 @@ async function applyHost(host, reason = 'auto') {
     });
 
     // Verify (shallow)
-    const verified = await verifyTopLevel(setId, barRootId, pinnedCount);
+    const verified = await verifyTopLevel(setId, markerFolderId);
     if (!verified) {
       const { lastBackupFolderId } = await storageGet({
         [STORAGE_KEYS.lastBackupFolderId]: DEFAULTS.lastBackupFolderId
@@ -500,6 +597,9 @@ async function applyHost(host, reason = 'auto') {
       await restoreFromBackup(barRootId, lastBackupFolderId);
       throw new Error('Verification failed; restored from last backup');
     }
+  } catch (e) {
+    await storageSet({ [STORAGE_KEYS.lastError]: e?.message || String(e) });
+    throw e;
   } finally {
     // Release mutex
     await storageSet({ [STORAGE_KEYS.inProgress]: null });
@@ -542,7 +642,7 @@ async function cleanupStaleState() {
   // Defensive: remove any leftover staging folders by title prefix
   try {
     const kids = await bookmarksGetChildren(barRootId);
-    const leftovers = kids.filter((n) => !n.url && (n.title || '').startsWith('__ContextBarStaging '));
+    const leftovers = kids.filter((n) => !n.url && (n.title || '').startsWith('__BarPilotStaging '));
     for (const f of leftovers) {
       await bookmarksRemoveTree(f.id);
     }
@@ -551,11 +651,28 @@ async function cleanupStaleState() {
   }
 }
 
+async function migrateStorageIfNeeded() {
+  const { schemaVersion } = await storageGet({ [STORAGE_KEYS.schemaVersion]: 0 });
+  if (!schemaVersion || schemaVersion < 1) {
+    // First stable schema
+    await storageSet({
+      [STORAGE_KEYS.schemaVersion]: 1,
+      [STORAGE_KEYS.mode]: DEFAULTS.mode,
+      [STORAGE_KEYS.switchTrigger]: DEFAULTS.switchTrigger,
+      [STORAGE_KEYS.pausedUntil]: DEFAULTS.pausedUntil,
+      [STORAGE_KEYS.syncWarningAcknowledged]: DEFAULTS.syncWarningAcknowledged,
+      [STORAGE_KEYS.lastError]: DEFAULTS.lastError
+    });
+  }
+}
+
 // -----------------------------
 // Event wiring
 // -----------------------------
 
 chrome.runtime.onInstalled.addListener(async () => {
+  await migrateStorageIfNeeded();
+
   // Initialize default keys if missing
   const existing = await storageGet({});
   const toSet = {};
@@ -566,6 +683,7 @@ chrome.runtime.onInstalled.addListener(async () => {
 });
 
 chrome.runtime.onStartup?.addListener(async () => {
+  await migrateStorageIfNeeded();
   await cleanupStaleState();
   const host = await getActiveHost();
   if (host) await scheduleCandidateSwitch(host);
@@ -574,15 +692,19 @@ chrome.runtime.onStartup?.addListener(async () => {
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (!alarm || alarm.name !== ALARMS.candidate) return;
 
-  const { candidateHost, candidateSince, lastApplyAt, enabled, locked } = await storageGet({
+  const { candidateHost, candidateSince, lastApplyAt, enabled, locked, mode, pausedUntil } = await storageGet({
     [STORAGE_KEYS.candidateHost]: DEFAULTS.candidateHost,
     [STORAGE_KEYS.candidateSince]: DEFAULTS.candidateSince,
     [STORAGE_KEYS.lastApplyAt]: DEFAULTS.lastApplyAt,
     [STORAGE_KEYS.enabled]: DEFAULTS.enabled,
-    [STORAGE_KEYS.locked]: DEFAULTS.locked
+    [STORAGE_KEYS.locked]: DEFAULTS.locked,
+    [STORAGE_KEYS.mode]: DEFAULTS.mode,
+    [STORAGE_KEYS.pausedUntil]: DEFAULTS.pausedUntil
   });
 
   if (!enabled || locked) return;
+  if (mode !== 'automatic') return;
+  if (pausedUntil && Date.now() < pausedUntil) return;
   if (!candidateHost) return;
 
   const activeNow = await getActiveHost();
@@ -598,16 +720,49 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 });
 
 chrome.tabs.onActivated.addListener(async () => {
+  const { switchTrigger } = await storageGet({ [STORAGE_KEYS.switchTrigger]: DEFAULTS.switchTrigger });
+  if (switchTrigger !== 'activation') return;
   const host = await getActiveHost();
   if (host) await scheduleCandidateSwitch(host);
 });
 
 chrome.tabs.onUpdated.addListener(async (_tabId, changeInfo, tab) => {
   if (!changeInfo || !changeInfo.url) return;
+  const { switchTrigger } = await storageGet({ [STORAGE_KEYS.switchTrigger]: DEFAULTS.switchTrigger });
+  if (switchTrigger !== 'navigation') return;
+
   const host = hostFromUrl(changeInfo.url);
   if (!host) return;
   if (!tab.active) return;
   await scheduleCandidateSwitch(host);
+});
+
+chrome.windows.onFocusChanged.addListener(async (windowId) => {
+  if (windowId === chrome.windows.WINDOW_ID_NONE) return;
+  const host = await getActiveHost();
+  if (host) await scheduleCandidateSwitch(host);
+});
+
+chrome.commands.onCommand.addListener(async (command) => {
+  try {
+    if (command === 'toggle-lock') {
+      const { locked } = await storageGet({ [STORAGE_KEYS.locked]: DEFAULTS.locked });
+      await storageSet({ [STORAGE_KEYS.locked]: !locked });
+      return;
+    }
+    if (command === 'toggle-enabled') {
+      const { enabled } = await storageGet({ [STORAGE_KEYS.enabled]: DEFAULTS.enabled });
+      await storageSet({ [STORAGE_KEYS.enabled]: !enabled });
+      return;
+    }
+    if (command === 'rerender-now') {
+      const host = await getActiveHost();
+      await applyHost(host, 'manual');
+      return;
+    }
+  } catch (e) {
+    await storageSet({ [STORAGE_KEYS.lastError]: e?.message || String(e) });
+  }
 });
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -615,13 +770,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     try {
       if (msg?.type === 'getState') {
         const s = await storageGet({
+          [STORAGE_KEYS.schemaVersion]: DEFAULTS.schemaVersion,
           [STORAGE_KEYS.enabled]: DEFAULTS.enabled,
           [STORAGE_KEYS.locked]: DEFAULTS.locked,
+          [STORAGE_KEYS.mode]: DEFAULTS.mode,
+          [STORAGE_KEYS.switchTrigger]: DEFAULTS.switchTrigger,
+          [STORAGE_KEYS.pausedUntil]: DEFAULTS.pausedUntil,
+          [STORAGE_KEYS.syncWarningAcknowledged]: DEFAULTS.syncWarningAcknowledged,
           [STORAGE_KEYS.pinnedCount]: DEFAULTS.pinnedCount,
           [STORAGE_KEYS.rules]: DEFAULTS.rules,
           [STORAGE_KEYS.defaultSetId]: DEFAULTS.defaultSetId,
           [STORAGE_KEYS.lastAppliedHost]: DEFAULTS.lastAppliedHost,
-          [STORAGE_KEYS.lastBackupFolderId]: DEFAULTS.lastBackupFolderId
+          [STORAGE_KEYS.lastBackupFolderId]: DEFAULTS.lastBackupFolderId,
+          [STORAGE_KEYS.lastError]: DEFAULTS.lastError
         });
         sendResponse({ ok: true, state: s });
         return;
@@ -635,7 +796,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
       if (msg?.type === 'listSets') {
         const { otherRootId } = await getBarAndOtherRootIds();
-        const { setsRootId } = await ensureContextBarFolders(otherRootId);
+        const { setsRootId } = await ensureBarPilotFolders(otherRootId);
         const kids = await bookmarksGetChildren(setsRootId);
         const sets = kids
           .filter((n) => !n.url)
@@ -644,9 +805,86 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return;
       }
 
+      if (msg?.type === 'previewForHost') {
+        const host = (msg.host || '').trim().toLowerCase();
+        if (!host) {
+          sendResponse({ ok: true, host: null, setId: null, setTitle: null, items: [] });
+          return;
+        }
+        const setId = await resolveSetIdForHost(host);
+        if (!setId) {
+          sendResponse({ ok: true, host, setId: null, setTitle: null, items: [] });
+          return;
+        }
+        const setNode = (await bookmarksGet(setId))?.[0];
+        const kids = await bookmarksGetChildren(setId);
+        const items = [];
+        for (const k of kids) {
+          if (k.url) {
+            items.push({ type: 'bookmark', title: k.title, url: k.url });
+          } else {
+            const c = await bookmarksGetChildren(k.id);
+            items.push({ type: 'folder', title: k.title, childCount: c.length });
+          }
+        }
+        sendResponse({ ok: true, host, setId, setTitle: setNode?.title || null, items });
+        return;
+      }
+
+      if (msg?.type === 'getLocalPreview') {
+        const host = await getActiveHost();
+        if (!host) {
+          sendResponse({ ok: true, host: null, setId: null, setTitle: null, items: [] });
+          return;
+        }
+        const setId = await resolveSetIdForHost(host);
+        if (!setId) {
+          sendResponse({ ok: true, host, setId: null, setTitle: null, items: [] });
+          return;
+        }
+        const setNode = (await bookmarksGet(setId))?.[0];
+        const kids = await bookmarksGetChildren(setId);
+        const items = [];
+        for (const k of kids) {
+          if (k.url) {
+            items.push({ type: 'bookmark', title: k.title, url: k.url });
+          } else {
+            const c = await bookmarksGetChildren(k.id);
+            items.push({ type: 'folder', title: k.title, childCount: c.length });
+          }
+        }
+        sendResponse({ ok: true, host, setId, setTitle: setNode?.title || null, items });
+        return;
+      }
+
       if (msg?.type === 'rerenderNow') {
         const host = await getActiveHost();
         await applyHost(host, 'manual');
+        sendResponse({ ok: true });
+        return;
+      }
+
+      if (msg?.type === 'resetManaged') {
+        const { barRootId, otherRootId } = await getBarAndOtherRootIds();
+        const { trashRootId } = await ensureBarPilotFolders(otherRootId);
+        const { managed } = await storageGet({ [STORAGE_KEYS.managed]: DEFAULTS.managed });
+        const pinnedCount = (await storageGet({ [STORAGE_KEYS.pinnedCount]: DEFAULTS.pinnedCount }))?.pinnedCount || 0;
+        const markerFolderId = await ensureMarkerFolder(barRootId, Math.max(0, Number(pinnedCount)), managed);
+
+        const markerChildren = await bookmarksGetChildren(markerFolderId);
+        if (markerChildren.length) {
+          const trashBucket = await bookmarksCreate({
+            parentId: trashRootId,
+            title: `${isoStamp()} - reset`
+          });
+          for (const n of markerChildren) {
+            await bookmarksMove(n.id, { parentId: trashBucket.id });
+          }
+        }
+
+        await storageSet({
+          [STORAGE_KEYS.managed]: { markerFolderId, lastRenderedIds: [], lastStagingFolderId: null }
+        });
         sendResponse({ ok: true });
         return;
       }

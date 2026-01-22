@@ -1,0 +1,91 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="options.css" />
+    <title>BarPilot Options</title>
+  </head>
+  <body>
+    <header>
+      <h1>BarPilot Options</h1>
+      <p class="sub">Rules, preview, and safety-focused settings.</p>
+    </header>
+
+    <section class="card">
+      <h2>Settings</h2>
+
+      <div class="grid">
+        <label>
+          <span>Mode</span>
+          <select id="mode">
+            <option value="automatic">Automatic</option>
+            <option value="manual">Manual (no auto switching)</option>
+            <option value="local">Local UI (no writes)</option>
+          </select>
+        </label>
+
+        <label>
+          <span>Trigger</span>
+          <select id="switchTrigger">
+            <option value="activation">On tab activation</option>
+            <option value="navigation">On navigation only</option>
+          </select>
+        </label>
+
+        <label>
+          <span>Pinned count</span>
+          <input id="pinnedCount" type="number" min="0" step="1" />
+        </label>
+
+        <label>
+          <span>Default set</span>
+          <select id="defaultSet"></select>
+        </label>
+      </div>
+
+      <p class="hint">
+        Your canonical sets should live under: <code>Other Bookmarks / BarPilot / Sets</code>.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>Rules</h2>
+      <p class="hint">Rules are checked in order: hostEquals → hostSuffix → regex → default.</p>
+
+      <div class="rules" id="rules"></div>
+
+      <div class="row">
+        <button id="addRule">Add rule</button>
+        <button id="saveRules" class="secondary">Save rules</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Preview (dry-run)</h2>
+      <p class="hint">This does not write to bookmarks. It just shows what would be used.</p>
+
+      <div class="row">
+        <input id="previewHost" type="text" placeholder="github.com" />
+        <button id="previewBtn">Preview</button>
+      </div>
+
+      <div class="kv">
+        <div><span class="k">Resolved set</span> <span id="previewSet" class="v"></span></div>
+      </div>
+      <ul id="previewItems" class="list"></ul>
+    </section>
+
+    <section class="card">
+      <h2>Diagnostics</h2>
+      <div class="kv">
+        <div><span class="k">Last applied host</span> <span id="lastAppliedHost" class="v"></span></div>
+        <div><span class="k">Last error</span> <span id="lastError" class="v"></span></div>
+      </div>
+    </section>
+
+    <p id="status" class="status"></p>
+
+    <script src="options.js"></script>
+  </body>
+</html>

@@ -1,0 +1,285 @@
+:root {
+  --bg: #0b0f17;
+  --card: #121a27;
+  --text: #e8eefc;
+  --muted: #9fb2d6;
+  --border: #23314a;
+  --btn: #2f6feb;
+  --btn2: #1f2a3d;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+}
+
+body {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 18px;
+}
+
+header h1 {
+  margin: 0;
+  font-size: 20px;
+}
+
+header .sub {
+  margin: 4px 0 14px;
+  color: var(--muted);
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 14px;
+}
+
+h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+
+.hint {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(240px, 1fr));
+  gap: 10px 18px;
+  margin-bottom: 8px;
+}
+
+label span {
+  display: block;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+input[type='text'],
+input[type='number'],
+select {
+  width: 100%;
+  background: #0d1421;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+button {
+  background: var(--btn);
+  color: white;
+  border: 0;
+  border-radius: 10px;
+  padding: 9px 12px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+button.secondary {
+  background: var(--btn2);
+  border: 1px solid var(--border);
+}
+
+.rules {
+  display: grid;
+  gap: 8px;
+}
+
+.rule {
+  display: grid;
+  grid-template-columns: 160px 1fr 260px 110px;
+  gap: 10px;
+  align-items: center;
+}
+
+.rule .danger {
+  background: #5a1a1a;
+}
+
+.status {
+  margin: 10px 0 0;
+  color: var(--muted);
+}
+
+.kv {
+  display: grid;
+  gap: 6px;
+}
+
+.k {
+  color: var(--muted);
+  margin-right: 8px;
+}
+
+.v {
+  color: var(--text);
+}
+
+.list {
+  margin: 8px 0 0;
+  padding: 0 0 0 18px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+code {
+  background: #0d1421;
+  border: 1px solid var(--border);
+  padding: 1px 6px;
+  border-radius: 8px;
+}
+:root {
+  --bg: #0b0f17;
+  --card: #121a27;
+  --text: #e8eefc;
+  --muted: #9fb2d6;
+  --border: #23314a;
+  --btn: #2f6feb;
+  --btn2: #1f2a3d;
+  --warn: #2a1b12;
+  --warnBorder: #5a3a1e;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+}
+
+body {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 18px;
+}
+
+header h1 {
+  margin: 0;
+  font-size: 20px;
+}
+
+header .sub {
+  margin: 6px 0 16px;
+  color: var(--muted);
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 14px;
+}
+
+.card.warn {
+  background: var(--warn);
+  border-color: var(--warnBorder);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 10px 0;
+}
+
+.row label {
+  color: var(--muted);
+}
+
+input[type='text'],
+select {
+  width: 320px;
+  background: #0d1421;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+button {
+  background: var(--btn2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 9px 12px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+button.primary {
+  background: var(--btn);
+  border-color: transparent;
+  color: white;
+}
+
+button.secondary {
+  background: transparent;
+}
+
+h2 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.hint {
+  margin: 0 0 10px;
+  color: var(--muted);
+}
+
+.status {
+  margin: 8px 0 0;
+  color: var(--muted);
+  min-height: 18px;
+}
+
+.ruleRow {
+  display: grid;
+  grid-template-columns: 160px 1fr 260px 80px;
+  gap: 10px;
+  align-items: center;
+  margin: 8px 0;
+}
+
+.ruleRow select,
+.ruleRow input {
+  width: 100%;
+}
+
+.pre {
+  background: #0d1421;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+  overflow: auto;
+  min-height: 70px;
+  white-space: pre-wrap;
+}
+
+code {
+  background: #0d1421;
+  border: 1px solid var(--border);
+  padding: 1px 6px;
+  border-radius: 8px;
+}

@@ -41,6 +41,11 @@ header .sub {
   margin-bottom: 10px;
 }
 
+.card.warning {
+  border-color: #6b4d00;
+  background: #1a1406;
+}
+
 .row {
   display: flex;
   align-items: center;
@@ -90,6 +95,35 @@ h2 {
   margin: 8px 0 0;
   color: var(--muted);
   min-height: 16px;
+}
+
+.diag {
+  margin: 6px 0 0;
+  color: #7f93ba;
+  font-size: 12px;
+  min-height: 14px;
+}
+
+.kv {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0 8px;
+}
+
+.k {
+  color: var(--muted);
+  margin-right: 6px;
+}
+
+.v {
+  color: var(--text);
+}
+
+.list {
+  margin: 0;
+  padding: 0 0 0 16px;
+  max-height: 160px;
+  overflow: auto;
 }
 
 code {

@@ -4,15 +4,47 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="stylesheet" href="popup.css" />
-    <title>ContextBar</title>
+    <title>BarPilot</title>
   </head>
   <body>
     <header>
-      <h1>ContextBar</h1>
-      <p class="sub">Switches the Bookmarks Bar by site</p>
+      <h1>BarPilot</h1>
+      <p class="sub">Per-site Bookmarks Bar profiles</p>
     </header>
 
+    <section id="syncWarning" class="card warning" hidden>
+      <h2>Heads up: Bookmark Sync</h2>
+      <p class="hint">
+        If Chrome bookmark sync is enabled on multiple devices, BarPilot’s bar updates can sync everywhere and cause
+        “flipping” when different devices are focused on different sites.
+      </p>
+      <label class="row">
+        <span>I understand</span>
+        <input id="ackSync" type="checkbox" />
+      </label>
+      <div class="row">
+        <button id="dismissSync">Dismiss</button>
+      </div>
+    </section>
+
     <section class="card">
+      <label class="row">
+        <span>Mode</span>
+        <select id="mode">
+          <option value="automatic">Automatic</option>
+          <option value="manual">Manual (no auto switching)</option>
+          <option value="local">Local UI (no writes)</option>
+        </select>
+      </label>
+
+      <label class="row">
+        <span>Trigger</span>
+        <select id="switchTrigger">
+          <option value="activation">On tab activation</option>
+          <option value="navigation">On navigation only</option>
+        </select>
+      </label>
+
       <label class="row">
         <span>Enabled</span>
         <input id="enabled" type="checkbox" />
@@ -39,8 +71,29 @@
       </div>
 
       <div class="row">
+        <button id="pause5" class="secondary">Pause 5m</button>
+        <button id="pause15" class="secondary">Pause 15m</button>
+        <button id="pause60" class="secondary">Pause 60m</button>
+      </div>
+
+      <div class="row">
+        <button id="resetManaged" class="secondary">Reset managed region</button>
+        <button id="openOptions" class="secondary">Options</button>
+      </div>
+
+      <div class="row">
         <button id="openBookmarks" class="secondary">Open Bookmarks</button>
       </div>
+    </section>
+
+    <section class="card" id="localPreview" hidden>
+      <h2>Local preview</h2>
+      <p class="hint">Shows what would be used for the current site without changing your bookmarks.</p>
+      <div class="kv">
+        <div><span class="k">Host</span> <span id="pvHost" class="v"></span></div>
+        <div><span class="k">Set</span> <span id="pvSet" class="v"></span></div>
+      </div>
+      <ul id="pvItems" class="list"></ul>
     </section>
 
     <section class="card">
@@ -58,6 +111,7 @@
         <button id="addRule">Add / update rule</button>
       </div>
       <p id="status" class="status"></p>
+      <p id="diag" class="diag"></p>
     </section>
 
     <script src="popup.js"></script>

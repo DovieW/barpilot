@@ -4,17 +4,17 @@ This file is intentionally a parking lot for “good ideas” that are **out of 
 
 ## UX / configuration
 
-- Add an `options.html` rule editor (CRUD for rules, ordering/priority, hostSuffix + regex).
+- (DONE) Add an `options.html` rule editor (CRUD for rules, hostSuffix + regex) + dry-run preview.
 - Add a “Default behavior for non-web URLs” setting:
   - do nothing vs apply default set.
-- Add a small diagnostics panel (last applied host, last apply time, last error).
+- (DONE) Add a small diagnostics panel (last applied host, last error).
 
 ## Safety / robustness
 
-- Improve bar/other root discovery (avoid assuming `getTree()[0].children[0/1]`).
+- (DONE) Improve bar/other root discovery (prefer known IDs when available; fallback safely).
 - Make rollback smarter:
   - restore only managed region during auto-rollback (leave pinned untouched).
-- Add an explicit “Reset managed region” action.
+- (DONE) Add an explicit “Reset managed region” action.
 - Add a “dry-run verify” mode and more detailed verification (1-level deep, counts).
 
 ## Performance / thrash
