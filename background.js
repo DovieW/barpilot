@@ -239,16 +239,28 @@ async function resolveSetIdForHost(host) {
 // -----------------------------
 
 async function getBarAndOtherRootIds() {
+  // Chrome uses stable IDs for bookmark roots:
+  // - '1' = Bookmarks bar
+  // - '2' = Other bookmarks
+  // Rely on those first; only fall back to tree order if they are unavailable.
+  try {
+    const bar = (await bookmarksGet('1'))?.[0];
+    const other = (await bookmarksGet('2'))?.[0];
+    if (bar && other && !bar.url && !other.url) {
+      return { barRootId: bar.id, otherRootId: other.id };
+    }
+  } catch {
+    // ignore and fall back
+  }
+
   const tree = await bookmarksGetTree();
   const root = tree?.[0];
   const children = root?.children;
   if (!children || children.length < 2) throw new Error('Unexpected bookmarks root structure');
 
-  // Prefer well-known IDs when available (helps in localized Chrome builds).
   const barById = children.find((c) => c.id === '1');
   const otherById = children.find((c) => c.id === '2');
 
-  // Fallback: the first two are typically: Bookmarks bar, Other bookmarks.
   const bar = barById || children[0];
   const other = otherById || children[1];
   if (!bar?.id || !other?.id) throw new Error('Could not discover bar/other root IDs');
@@ -311,6 +323,41 @@ async function ensureBarPilotFolders(otherRootId) {
   const backupsRootId = await findOrCreateFolderPath([rootTitle, BARPILOT.backupsName], otherRootId);
   const trashRootId = await findOrCreateFolderPath([rootTitle, BARPILOT.trashName], otherRootId);
   return { rootId, rootTitle, setsRootId, backupsRootId, trashRootId };
+}
+
+async function looksLikeCanonicalBarPilotRoot(folderId) {
+  try {
+    const kids = await bookmarksGetChildren(folderId);
+    const titles = new Set(kids.filter((n) => !n.url).map((n) => n.title));
+    return titles.has(BARPILOT.setsName) && titles.has(BARPILOT.backupsName) && titles.has(BARPILOT.trashName);
+  } catch {
+    return false;
+  }
+}
+
+async function cleanupMisplacedCanonicalRoot() {
+  // If an older bug (or manual mistake) created the canonical BarPilot folder under the
+  // Bookmarks Bar, try to move it to Other Bookmarks.
+  // Safety rules:
+  // - Only act when the folder *looks like* our canonical root (has Sets/Backups/Trash)
+  // - Only move it if there isn't already an equivalent root under Other Bookmarks
+  try {
+    const { barRootId, otherRootId } = await getBarAndOtherRootIds();
+
+    for (const title of BARPILOT.rootNames) {
+      const onBar = await findChildFolderByTitle(barRootId, title);
+      if (!onBar) continue;
+      if (!(await looksLikeCanonicalBarPilotRoot(onBar.id))) continue;
+
+      const inOther = await findChildFolderByTitle(otherRootId, title);
+      if (inOther) continue;
+
+      await bookmarksMove(onBar.id, { parentId: otherRootId });
+      return;
+    }
+  } catch {
+    // ignore
+  }
 }
 
 async function ensureMarkerFolder(barRootId, pinnedCount, managedState) {
@@ -673,6 +720,9 @@ async function migrateStorageIfNeeded() {
 chrome.runtime.onInstalled.addListener(async () => {
   await migrateStorageIfNeeded();
 
+  // One-time safety cleanup for older builds.
+  await cleanupMisplacedCanonicalRoot();
+
   // Initialize default keys if missing
   const existing = await storageGet({});
   const toSet = {};
@@ -684,6 +734,7 @@ chrome.runtime.onInstalled.addListener(async () => {
 
 chrome.runtime.onStartup?.addListener(async () => {
   await migrateStorageIfNeeded();
+  await cleanupMisplacedCanonicalRoot();
   await cleanupStaleState();
   const host = await getActiveHost();
   if (host) await scheduleCandidateSwitch(host);
