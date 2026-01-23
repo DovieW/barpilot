@@ -39,6 +39,14 @@
         </label>
 
         <label>
+          <span>Render location</span>
+          <select id="renderLocation">
+            <option value="markerFolder">Inside “— BarPilot —” folder (safest)</option>
+            <option value="bar">Directly on the bookmarks bar (no folder)</option>
+          </select>
+        </label>
+
+        <label>
           <span>Default set</span>
           <select id="defaultSet"></select>
         </label>
@@ -46,6 +54,10 @@
 
       <p class="hint">
         Your canonical sets should live under: <code>Other Bookmarks / BarPilot / Sets</code>.
+      </p>
+
+      <p class="hint">
+        Note: “Directly on the bookmarks bar” means BarPilot will manage (move to Trash + replace) everything after your pinned items.
       </p>
     </section>
 

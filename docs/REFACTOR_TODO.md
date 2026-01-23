@@ -16,6 +16,9 @@ This file is intentionally a parking lot for “good ideas” that are **out of 
   - restore only managed region during auto-rollback (leave pinned untouched).
 - (DONE) Add an explicit “Reset managed region” action.
 - Add a “dry-run verify” mode and more detailed verification (1-level deep, counts).
+- Consider adjusting `cleanupStaleState()` fallback staging-folder cleanup:
+  - It currently scans children of the bookmarks bar root for `__BarPilotStaging …`.
+  - Staging folders are created under the marker folder, so the fallback scan may be looking in the wrong place.
 
 ## Performance / thrash
 

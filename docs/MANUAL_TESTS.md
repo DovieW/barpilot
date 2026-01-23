@@ -61,15 +61,21 @@ Expected:
 ### C. Create rules + defaults (Options)
 
 1. Open BarPilot **Options**
-2. Set:
+2. Open DevTools for the Options page (right click → Inspect)
+
+Expected:
+- Options UI loads (not blank)
+- DevTools console shows **no red errors** on load
+
+3. Set:
   - Mode: **Automatic**
   - Trigger: **On tab activation**
   - Pinned count: `2` (or whatever you want)
   - Default set: **Default**
-3. Add rules:
+4. Add rules:
   - `hostEquals` + `github.com` → GitHub
   - `hostEquals` + `youtube.com` → YouTube
-4. Click **Save rules**
+5. Click **Save rules**
 
 Expected:
 - Refresh Options: rules are still there.
@@ -79,6 +85,8 @@ Expected:
 ## Test group 1: Switching behavior (core)
 
 ### 1.1 Marker folder behavior
+
+Note: This is the **default** render mode.
 
 1. Ensure your bookmarks bar is visible.
 2. Open a GitHub tab and a YouTube tab.
@@ -90,6 +98,17 @@ Expected:
 - Immediately after pinned items there is a folder:
   - `— BarPilot —`
 - Inside `— BarPilot —`, the contents match the GitHub set (top-level items).
+
+### 1.1b Direct-to-bar behavior (no folder)
+
+1. Open BarPilot Options (or popup).
+2. Set **Render** to: **Directly on the bookmarks bar (no folder)**.
+3. Switch to a mapped site tab (GitHub, YouTube, etc.) and wait ~2 seconds.
+
+Expected:
+- The `— BarPilot —` folder should **not** be on your bookmarks bar (it may get moved to Trash if it existed).
+- After your pinned items, the bookmarks bar itself matches the active set.
+- Switching sites replaces everything after the pinned boundary (moved into `Other Bookmarks / BarPilot / Trash`).
 
 ### 1.2 Switching between sites
 
@@ -159,11 +178,23 @@ Expected:
 
 ### 3.1 Unknown items outside marker are untouched
 
+Note: This applies to the default **marker folder** render mode.
+
 1. Create a new bookmark on the bar **outside** `— BarPilot —`.
 2. Switch sites a few times.
 
 Expected:
 - That bookmark is never moved/deleted.
+
+### 3.1b Direct-to-bar: non-pinned items are managed
+
+1. Set **Render** to: **Directly on the bookmarks bar (no folder)**.
+2. Put a normal bookmark on the bar **after** your pinned items.
+3. Trigger a switch.
+
+Expected:
+- That bookmark is moved into `Other Bookmarks / BarPilot / Trash` (because in this mode BarPilot manages everything after the pinned boundary).
+- You can still recover via **Restore last backup**.
 
 ### 3.2 User edits inside marker are not deleted automatically
 
@@ -315,6 +346,34 @@ BarPilot supports legacy root folder names (it will recognize `ContextBar` if it
 
 Expected:
 - BarPilot can find/create its root and still validate sets under the chosen root.
+
+---
+
+## Test group 10: Robustness / edge cases
+
+### 10.1 Dwell logic tolerates missing/corrupt candidate metadata
+
+This is a “break glass” test to make sure switching doesn’t silently stop if storage gets weird.
+
+1. Open `chrome://extensions`
+2. Find BarPilot → click **service worker** (inspect)
+3. In the Console, delete or corrupt the stored `candidateSince` value (exact key name may change; the goal is “missing/non-number”) and ensure `candidateHost` is set to a real host (example: `github.com`)
+4. Activate a tab on that host and wait ~2 seconds
+
+Expected:
+- No repeating errors about alarms / invalid timestamps
+- Auto switching still happens after the normal dwell time
+
+### 10.2 Rule points to deleted set folder (auto switch should not crash)
+
+1. Create a rule mapping `github.com` → GitHub set
+2. In Bookmarks Manager, delete the `Sets / GitHub` folder (or move it so the stored id is invalid)
+3. Visit/activate `github.com`
+
+Expected:
+- BarPilot reports the failure in Diagnostics (`Last error`)
+- Service worker does **not** get stuck spamming “Uncaught (in promise)” errors
+- After fixing the rule, future switching still works
 
 ---
 

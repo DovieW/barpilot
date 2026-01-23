@@ -23,6 +23,13 @@ BarPilot also keeps its changes inside a clearly labeled marker folder on your B
 
 Anything outside that marker (including your pinned items) is left alone.
 
+If you prefer not to have a folder on the bar, you can switch to **Render directly on the bookmarks bar** in Options.
+In that mode, BarPilot will manage (move to Trash + replace) **everything after your pinned items**.
+
+When you switch between render modes:
+- Switching **to** direct-to-bar: BarPilot will remove the `— BarPilot —` marker folder from the bar (moved to Trash) and replace everything after your pinned items.
+- Switching **back** to marker-folder mode: BarPilot restores a baseline backup (made when you first entered direct-to-bar mode) so your previous non-BarPilot bar items come back.
+
 ## Important note about Chrome Sync
 If you use Chrome bookmark sync across multiple devices, BarPilot’s changes to the Bookmarks Bar may:
 - sync to other devices, and

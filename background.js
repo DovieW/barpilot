@@ -18,6 +18,9 @@ const STORAGE_KEYS = {
   enabled: 'enabled',
   locked: 'locked',
   mode: 'mode',
+  renderLocation: 'renderLocation',
+  lastRenderLocationUsed: 'lastRenderLocationUsed',
+  barModeBaselineBackupFolderId: 'barModeBaselineBackupFolderId',
   switchTrigger: 'switchTrigger',
   pausedUntil: 'pausedUntil',
   syncWarningAcknowledged: 'syncWarningAcknowledged',
@@ -41,6 +44,12 @@ const DEFAULTS = {
   enabled: true,
   locked: false,
   mode: 'automatic', // automatic | manual | local
+  // Where the active set is rendered:
+  // - 'markerFolder': inside a visible marker folder on the bar (safest)
+  // - 'bar': directly onto the bookmarks bar after pinned items
+  renderLocation: 'markerFolder',
+  lastRenderLocationUsed: 'markerFolder',
+  barModeBaselineBackupFolderId: null,
   switchTrigger: 'activation', // activation | navigation
   pausedUntil: 0,
   syncWarningAcknowledged: false,
@@ -314,6 +323,13 @@ async function ensureBarPilotFolders(otherRootId) {
 }
 
 async function ensureMarkerFolder(barRootId, pinnedCount, managedState) {
+  // Chrome will throw "Index out of bounds" if index > current children length.
+  // If user sets pinnedCount larger than the bar length, treat it as "append at end".
+  const clampBoundaryIndex = async () => {
+    const siblings = await bookmarksGetChildren(barRootId);
+    return Math.min(Math.max(0, Number(pinnedCount || 0)), siblings.length);
+  };
+
   // 1) Try stored markerFolderId
   const storedId = managedState?.markerFolderId;
   if (storedId) {
@@ -324,8 +340,9 @@ async function ensureMarkerFolder(barRootId, pinnedCount, managedState) {
         // ensure it is at the boundary index
         const siblings = await bookmarksGetChildren(barRootId);
         const idx = siblings.findIndex((n) => n.id === storedId);
-        if (idx !== pinnedCount) {
-          await bookmarksMove(storedId, { parentId: barRootId, index: pinnedCount });
+        const boundary = Math.min(Math.max(0, Number(pinnedCount || 0)), siblings.length);
+        if (idx !== boundary) {
+          await bookmarksMove(storedId, { parentId: barRootId, index: boundary });
         }
         return storedId;
       }
@@ -339,14 +356,16 @@ async function ensureMarkerFolder(barRootId, pinnedCount, managedState) {
   const existing = kids.find((n) => !n.url && n.title === MARKER.title);
   if (existing) {
     const idx = kids.findIndex((n) => n.id === existing.id);
-    if (idx !== pinnedCount) {
-      await bookmarksMove(existing.id, { parentId: barRootId, index: pinnedCount });
+    const boundary = Math.min(Math.max(0, Number(pinnedCount || 0)), kids.length);
+    if (idx !== boundary) {
+      await bookmarksMove(existing.id, { parentId: barRootId, index: boundary });
     }
     return existing.id;
   }
 
   // 3) Create new marker folder
-  const created = await bookmarksCreate({ parentId: barRootId, title: MARKER.title, index: pinnedCount });
+  const boundary = await clampBoundaryIndex();
+  const created = await bookmarksCreate({ parentId: barRootId, title: MARKER.title, index: boundary });
   return created.id;
 }
 
@@ -403,14 +422,29 @@ async function snapshotBar(host, barRootId, pinnedCount) {
 }
 
 async function backupBar(host, barRootId, backupsRootId) {
-  const folderTitle = `${isoStamp()} - ${host || 'unknown'}`;
-  const backupFolder = await bookmarksCreate({ parentId: backupsRootId, title: folderTitle });
+  return await backupBarToFolder({
+    parentId: backupsRootId,
+    title: `${isoStamp()} - ${host || 'unknown'}`,
+    barRootId,
+    setAsLastBackup: true
+  });
+}
+
+async function backupBarToFolder({ parentId, title, barRootId, setAsLastBackup }) {
+  const backupFolder = await bookmarksCreate({ parentId, title });
   const barChildren = await bookmarksGetChildren(barRootId);
   for (const c of barChildren) {
     await copySubtree(c.id, backupFolder.id);
   }
-  await storageSet({ [STORAGE_KEYS.lastBackupFolderId]: backupFolder.id });
+  if (setAsLastBackup) {
+    await storageSet({ [STORAGE_KEYS.lastBackupFolderId]: backupFolder.id });
+  }
   return backupFolder.id;
+}
+
+async function findMarkerFolderOnBar(barRootId) {
+  const kids = await bookmarksGetChildren(barRootId);
+  return kids.find((n) => !n.url && n.title === MARKER.title) || null;
 }
 
 async function restoreFromBackup(barRootId, backupFolderId) {
@@ -462,8 +496,24 @@ async function scheduleCandidateSwitch(host) {
   await alarmsCreate(ALARMS.candidate, { when: Date.now() + TIMING.debounceMs });
 }
 
-async function verifyTopLevel(setId, markerFolderId) {
+async function verifyRenderedTopLevel(setId, renderLocation, barRootId, pinnedCount, markerFolderId) {
   const setKids = await bookmarksGetChildren(setId);
+
+  if (renderLocation === 'bar') {
+    const barKids = await bookmarksGetChildren(barRootId);
+    const managed = barKids.slice(pinnedCount);
+    if (managed.length !== setKids.length) return false;
+    for (let i = 0; i < setKids.length; i++) {
+      const a = setKids[i];
+      const b = managed[i];
+      if ((a.title || '') !== (b.title || '')) return false;
+      if (!!a.url !== !!b.url) return false;
+      if (a.url && b.url && a.url !== b.url) return false;
+    }
+    return true;
+  }
+
+  // default: markerFolder
   const markerKids = await bookmarksGetChildren(markerFolderId);
   const managed = markerKids.slice(0, setKids.length);
   if (managed.length !== setKids.length) return false;
@@ -483,6 +533,9 @@ async function applyHost(host, reason = 'auto') {
     [STORAGE_KEYS.enabled]: DEFAULTS.enabled,
     [STORAGE_KEYS.locked]: DEFAULTS.locked,
     [STORAGE_KEYS.mode]: DEFAULTS.mode,
+    [STORAGE_KEYS.renderLocation]: DEFAULTS.renderLocation,
+    [STORAGE_KEYS.lastRenderLocationUsed]: DEFAULTS.lastRenderLocationUsed,
+    [STORAGE_KEYS.barModeBaselineBackupFolderId]: DEFAULTS.barModeBaselineBackupFolderId,
     [STORAGE_KEYS.pausedUntil]: DEFAULTS.pausedUntil,
     [STORAGE_KEYS.pinnedCount]: DEFAULTS.pinnedCount,
     [STORAGE_KEYS.lastApplyAt]: DEFAULTS.lastApplyAt,
@@ -516,28 +569,70 @@ async function applyHost(host, reason = 'auto') {
     if (!setId) return;
 
     const { barRootId, otherRootId } = await getBarAndOtherRootIds();
-    const { rootTitle, setsRootId, backupsRootId, trashRootId } = await ensureBarPilotFolders(otherRootId);
+    const { rootId, rootTitle, setsRootId, backupsRootId, trashRootId } = await ensureBarPilotFolders(otherRootId);
 
     // Validate that setId is under BarPilot/Sets (or migrated legacy root)
     const ok = await isDescendantOf(setId, setsRootId);
     if (!ok) throw new Error(`Refusing to apply: target set is not under ${rootTitle}/Sets`);
 
     const pinnedCount = Math.max(0, Number(state.pinnedCount || 0));
+    const renderLocation = state.renderLocation || DEFAULTS.renderLocation;
+    const lastRenderLocationUsed = state.lastRenderLocationUsed || DEFAULTS.lastRenderLocationUsed;
+
+    // If switching out of direct-to-bar mode, restore the baseline bar first so the user gets their bar back.
+    if (lastRenderLocationUsed === 'bar' && renderLocation !== 'bar' && state.barModeBaselineBackupFolderId) {
+      await restoreFromBackup(barRootId, state.barModeBaselineBackupFolderId);
+      // Baseline was used; clear it so future switches create a fresh one.
+      await storageSet({ [STORAGE_KEYS.barModeBaselineBackupFolderId]: null });
+    }
+
+    // In direct-to-bar mode, always remove the marker folder if it exists (even if it's inside the "pinned" region).
+    // This prevents ending up with BOTH marker folder + direct-to-bar items when toggling modes.
+    if (renderLocation === 'bar') {
+      const marker = await findMarkerFolderOnBar(barRootId);
+      if (marker) {
+        const trashBucket = await bookmarksCreate({
+          parentId: trashRootId,
+          title: `${isoStamp()} - removed marker`
+        });
+        await bookmarksMove(marker.id, { parentId: trashBucket.id });
+      }
+    }
+
+    // Clamp the "pinned boundary" so bookmark operations never use an out-of-range index.
+    const barChildrenBefore = await bookmarksGetChildren(barRootId);
+    const boundaryIndex = Math.min(pinnedCount, barChildrenBefore.length);
 
     // Snapshot + Backup
     await snapshotBar(host, barRootId, pinnedCount);
     await backupBar(host, barRootId, backupsRootId);
 
-    // Ensure marker folder is present at the boundary index
-    const markerFolderId = await ensureMarkerFolder(barRootId, pinnedCount, state.managed);
+    // If switching INTO direct-to-bar mode, capture a baseline backup of the user's bar (without setting "last backup").
+    if (lastRenderLocationUsed !== 'bar' && renderLocation === 'bar' && !state.barModeBaselineBackupFolderId) {
+      const baselineId = await backupBarToFolder({
+        parentId: backupsRootId,
+        title: `${isoStamp()} - baseline before direct-to-bar`,
+        barRootId,
+        setAsLastBackup: false
+      });
+      await storageSet({ [STORAGE_KEYS.barModeBaselineBackupFolderId]: baselineId });
+    }
 
-    // Create staging folder under marker folder
+    let markerFolderId = null;
+    let stagingParentId = rootId;
+    if (renderLocation !== 'bar') {
+      // Marker folder mode: ensure marker folder is present at the boundary index
+      markerFolderId = await ensureMarkerFolder(barRootId, boundaryIndex, state.managed);
+      stagingParentId = markerFolderId;
+    }
+
+    // Create staging folder (location depends on render mode)
     const stagingTitle = `__BarPilotStaging ${opId}`;
-    const stagingFolder = await bookmarksCreate({ parentId: markerFolderId, title: stagingTitle });
+    const stagingFolder = await bookmarksCreate({ parentId: stagingParentId, title: stagingTitle });
     await storageSet({
       [STORAGE_KEYS.managed]: {
         ...(state.managed || DEFAULTS.managed),
-        markerFolderId,
+        markerFolderId: renderLocation === 'bar' ? null : markerFolderId,
         lastStagingFolderId: stagingFolder.id
       }
     });
@@ -548,28 +643,45 @@ async function applyHost(host, reason = 'auto') {
       await copySubtree(c.id, stagingFolder.id);
     }
 
-    // Compute current children and managed deletion candidates (inside marker folder)
-    const markerChildren = await bookmarksGetChildren(markerFolderId);
-    const lastRenderedIds = state.managed?.lastRenderedIds || [];
-    const eligible = markerChildren.filter((n) => lastRenderedIds.includes(n.id));
+    // Clear the managed region
+    if (renderLocation === 'bar') {
+      // In direct-to-bar mode, the managed region is everything after pinnedCount.
+      // We move it to Trash (backup already exists) so switching is deterministic.
+      const managedRegion = barChildrenBefore.slice(boundaryIndex);
+      if (managedRegion.length) {
+        const trashBucket = await bookmarksCreate({
+          parentId: trashRootId,
+          title: `${isoStamp()} - ${host || 'unknown'}`
+        });
+        for (const n of managedRegion) {
+          await bookmarksMove(n.id, { parentId: trashBucket.id });
+        }
+      }
+    } else {
+      // Marker folder mode: only move what we previously rendered (inside marker folder)
+      const markerChildren = await bookmarksGetChildren(markerFolderId);
+      const lastRenderedIds = state.managed?.lastRenderedIds || [];
+      const eligible = markerChildren.filter((n) => lastRenderedIds.includes(n.id));
 
-    // Move old managed items to Trash (safest)
-    if (eligible.length) {
-      const trashBucket = await bookmarksCreate({
-        parentId: trashRootId,
-        title: `${isoStamp()} - ${host || 'unknown'}`
-      });
-      for (const n of eligible) {
-        await bookmarksMove(n.id, { parentId: trashBucket.id });
+      if (eligible.length) {
+        const trashBucket = await bookmarksCreate({
+          parentId: trashRootId,
+          title: `${isoStamp()} - ${host || 'unknown'}`
+        });
+        for (const n of eligible) {
+          await bookmarksMove(n.id, { parentId: trashBucket.id });
+        }
       }
     }
 
-    // Move staging children into the marker folder at index 0
+    // Move staging children into the target location
     const stagingChildren = await bookmarksGetChildren(stagingFolder.id);
     const renderedTopLevelIds = [];
     let idx = 0;
+    const targetParentId = renderLocation === 'bar' ? barRootId : markerFolderId;
+    const targetIndexBase = renderLocation === 'bar' ? boundaryIndex : 0;
     for (const n of stagingChildren) {
-      const moved = await bookmarksMove(n.id, { parentId: markerFolderId, index: idx });
+      const moved = await bookmarksMove(n.id, { parentId: targetParentId, index: targetIndexBase + idx });
       renderedTopLevelIds.push(moved.id);
       idx++;
     }
@@ -580,16 +692,17 @@ async function applyHost(host, reason = 'auto') {
     // Record state
     await storageSet({
       [STORAGE_KEYS.managed]: {
-        markerFolderId,
+        markerFolderId: renderLocation === 'bar' ? null : markerFolderId,
         lastRenderedIds: renderedTopLevelIds,
         lastStagingFolderId: null
       },
       [STORAGE_KEYS.lastAppliedHost]: host,
-      [STORAGE_KEYS.lastApplyAt]: Date.now()
+      [STORAGE_KEYS.lastApplyAt]: Date.now(),
+      [STORAGE_KEYS.lastRenderLocationUsed]: renderLocation
     });
 
     // Verify (shallow)
-    const verified = await verifyTopLevel(setId, markerFolderId);
+    const verified = await verifyRenderedTopLevel(setId, renderLocation, barRootId, boundaryIndex, markerFolderId);
     if (!verified) {
       const { lastBackupFolderId } = await storageGet({
         [STORAGE_KEYS.lastBackupFolderId]: DEFAULTS.lastBackupFolderId
@@ -642,6 +755,19 @@ async function cleanupStaleState() {
   // Defensive: remove any leftover staging folders by title prefix
   try {
     const kids = await bookmarksGetChildren(barRootId);
+    const leftovers = kids.filter((n) => !n.url && (n.title || '').startsWith('__BarPilotStaging '));
+    for (const f of leftovers) {
+      await bookmarksRemoveTree(f.id);
+    }
+  } catch {
+    // ignore
+  }
+
+  // Also check under Other Bookmarks / BarPilot root (used by direct-to-bar mode)
+  try {
+    const { otherRootId } = await getBarAndOtherRootIds();
+    const { rootId } = await ensureBarPilotFolders(otherRootId);
+    const kids = await bookmarksGetChildren(rootId);
     const leftovers = kids.filter((n) => !n.url && (n.title || '').startsWith('__BarPilotStaging '));
     for (const f of leftovers) {
       await bookmarksRemoveTree(f.id);
@@ -707,16 +833,27 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (pausedUntil && Date.now() < pausedUntil) return;
   if (!candidateHost) return;
 
+  const since = Number(candidateSince);
+  const sinceMs = Number.isFinite(since) && since > 0 ? since : 0;
+
   const activeNow = await getActiveHost();
   if (activeNow !== candidateHost) return;
-  if (Date.now() - (candidateSince || 0) < TIMING.dwellMs) {
+
+  const elapsedMs = Date.now() - sinceMs;
+  if (elapsedMs < TIMING.dwellMs) {
     // not dwelled long enough; reschedule
-    await alarmsCreate(ALARMS.candidate, { when: Date.now() + (TIMING.dwellMs - (Date.now() - candidateSince)) });
+    const remainingMs = Math.max(50, TIMING.dwellMs - elapsedMs);
+    await alarmsCreate(ALARMS.candidate, { when: Date.now() + remainingMs });
     return;
   }
 
   if (Date.now() - (lastApplyAt || 0) < TIMING.minIntervalMs) return;
-  await applyHost(candidateHost, 'auto');
+  try {
+    await applyHost(candidateHost, 'auto');
+  } catch (e) {
+    // applyHost already records lastError; avoid unhandled rejection in MV3 alarm handler.
+    console.warn('BarPilot: auto applyHost failed', e);
+  }
 });
 
 chrome.tabs.onActivated.addListener(async () => {
@@ -774,6 +911,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           [STORAGE_KEYS.enabled]: DEFAULTS.enabled,
           [STORAGE_KEYS.locked]: DEFAULTS.locked,
           [STORAGE_KEYS.mode]: DEFAULTS.mode,
+          [STORAGE_KEYS.renderLocation]: DEFAULTS.renderLocation,
           [STORAGE_KEYS.switchTrigger]: DEFAULTS.switchTrigger,
           [STORAGE_KEYS.pausedUntil]: DEFAULTS.pausedUntil,
           [STORAGE_KEYS.syncWarningAcknowledged]: DEFAULTS.syncWarningAcknowledged,
@@ -867,24 +1005,49 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       if (msg?.type === 'resetManaged') {
         const { barRootId, otherRootId } = await getBarAndOtherRootIds();
         const { trashRootId } = await ensureBarPilotFolders(otherRootId);
-        const { managed } = await storageGet({ [STORAGE_KEYS.managed]: DEFAULTS.managed });
-        const pinnedCount = (await storageGet({ [STORAGE_KEYS.pinnedCount]: DEFAULTS.pinnedCount }))?.pinnedCount || 0;
-        const markerFolderId = await ensureMarkerFolder(barRootId, Math.max(0, Number(pinnedCount)), managed);
-
-        const markerChildren = await bookmarksGetChildren(markerFolderId);
-        if (markerChildren.length) {
-          const trashBucket = await bookmarksCreate({
-            parentId: trashRootId,
-            title: `${isoStamp()} - reset`
-          });
-          for (const n of markerChildren) {
-            await bookmarksMove(n.id, { parentId: trashBucket.id });
-          }
-        }
-
-        await storageSet({
-          [STORAGE_KEYS.managed]: { markerFolderId, lastRenderedIds: [], lastStagingFolderId: null }
+        const { managed, pinnedCount, renderLocation } = await storageGet({
+          [STORAGE_KEYS.managed]: DEFAULTS.managed,
+          [STORAGE_KEYS.pinnedCount]: DEFAULTS.pinnedCount,
+          [STORAGE_KEYS.renderLocation]: DEFAULTS.renderLocation
         });
+
+        const pc = Math.max(0, Number(pinnedCount || 0));
+        const rl = renderLocation || DEFAULTS.renderLocation;
+
+        if (rl === 'bar') {
+          const barChildren = await bookmarksGetChildren(barRootId);
+          const boundaryIndex = Math.min(pc, barChildren.length);
+          const managedRegion = barChildren.slice(boundaryIndex);
+          if (managedRegion.length) {
+            const trashBucket = await bookmarksCreate({
+              parentId: trashRootId,
+              title: `${isoStamp()} - reset`
+            });
+            for (const n of managedRegion) {
+              await bookmarksMove(n.id, { parentId: trashBucket.id });
+            }
+          }
+          await storageSet({
+            [STORAGE_KEYS.managed]: { markerFolderId: null, lastRenderedIds: [], lastStagingFolderId: null }
+          });
+        } else {
+          const boundaryIndex = Math.min(pc, (await bookmarksGetChildren(barRootId)).length);
+          const markerFolderId = await ensureMarkerFolder(barRootId, boundaryIndex, managed);
+          const markerChildren = await bookmarksGetChildren(markerFolderId);
+          if (markerChildren.length) {
+            const trashBucket = await bookmarksCreate({
+              parentId: trashRootId,
+              title: `${isoStamp()} - reset`
+            });
+            for (const n of markerChildren) {
+              await bookmarksMove(n.id, { parentId: trashBucket.id });
+            }
+          }
+
+          await storageSet({
+            [STORAGE_KEYS.managed]: { markerFolderId, lastRenderedIds: [], lastStagingFolderId: null }
+          });
+        }
         sendResponse({ ok: true });
         return;
       }

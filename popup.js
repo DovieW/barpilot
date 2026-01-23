@@ -66,6 +66,8 @@ async function refresh() {
   el('enabled').checked = !!state.enabled;
   el('locked').checked = !!state.locked;
   el('pinnedCount').value = String(state.pinnedCount ?? 0);
+  const rl = el('renderLocation');
+  if (rl) rl.value = state.renderLocation || 'markerFolder';
 
   await loadSetsInto(el('defaultSet'), sets, '(none)');
   await loadSetsInto(el('ruleSet'), sets, '(pick a set)');
@@ -179,6 +181,18 @@ document.addEventListener('DOMContentLoaded', async () => {
       setStatus(e.message);
     }
   });
+
+  const rl = el('renderLocation');
+  if (rl) {
+    rl.addEventListener('change', async () => {
+      try {
+        await patchState({ renderLocation: rl.value || 'markerFolder' });
+        setStatus('Saved.');
+      } catch (e) {
+        setStatus(e.message);
+      }
+    });
+  }
 
   el('defaultSet').addEventListener('change', async () => {
     try {
